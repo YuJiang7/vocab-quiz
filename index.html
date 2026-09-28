@@ -1,0 +1,240 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>英文小测</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon-180.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="英文小测">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="theme-color" content="#8c1515">
+<style>
+  :root {
+    --bg: #faf7f2; --card: #ffffff; --ink: #1f1d1a; --muted: #6f6a62;
+    --line: #e7e1d7; --accent: #8c1515; --accent-soft: #f6e9e9;
+    --good: #2f7d4f; --good-soft: #e6f3eb; --bad: #b3261e; --bad-soft: #fbeae9;
+    --shaky: #9a6a00; --shaky-soft: #fbf2dc;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #161513; --card: #211f1c; --ink: #f1ede6; --muted: #a39d93;
+      --line: #36322d; --accent: #e07a7a; --accent-soft: #3a2424;
+      --good: #7fcf9c; --good-soft: #1f3327; --bad: #f08c85; --bad-soft: #3a2220;
+      --shaky: #e6c070; --shaky-soft: #362d17;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 17px/1.55 -apple-system, BlinkMacSystemFont, "PingFang SC", "Helvetica Neue", sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 560px; margin: 0 auto; padding: 20px 16px 48px; }
+  header h1 { font-size: 22px; margin: 4px 0 2px; }
+  header p { margin: 0; color: var(--muted); font-size: 14px; }
+  .bar { height: 6px; background: var(--line); border-radius: 3px; margin: 16px 0 20px; overflow: hidden; }
+  .bar > div { height: 100%; width: 0; background: var(--accent); transition: width .25s; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 20px 18px; }
+  .tag { display: inline-block; font-size: 12px; font-weight: 600; letter-spacing: .02em;
+         color: var(--accent); background: var(--accent-soft); padding: 3px 8px; border-radius: 999px; }
+  .count { float: right; color: var(--muted); font-size: 13px; }
+  .instr { color: var(--muted); font-size: 14px; margin: 12px 0 4px; }
+  .prompt { font-size: 19px; margin: 6px 0 16px; white-space: pre-wrap; }
+  textarea {
+    width: 100%; min-height: 84px; font: inherit; color: var(--ink); background: var(--bg);
+    border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; resize: vertical;
+  }
+  textarea:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .choices { display: grid; gap: 10px; }
+  .choice {
+    text-align: left; font: inherit; color: var(--ink); background: var(--bg);
+    border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; cursor: pointer;
+  }
+  .choice.right { background: var(--good-soft); border-color: var(--good); }
+  .choice.wrong { background: var(--bad-soft); border-color: var(--bad); }
+  .choice:disabled { cursor: default; }
+  .btn {
+    font: inherit; font-weight: 600; border: 0; border-radius: 10px; padding: 12px 16px;
+    background: var(--accent); color: #fff; cursor: pointer; width: 100%; margin-top: 14px;
+  }
+  .btn.ghost { background: transparent; color: var(--accent); border: 1px solid var(--accent); }
+  .grade { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 14px; }
+  .grade button { font: inherit; font-size: 15px; font-weight: 600; border-radius: 10px; padding: 11px 6px; cursor: pointer; border: 1px solid; }
+  .g-right { background: var(--good-soft); color: var(--good); border-color: var(--good); }
+  .g-shaky { background: var(--shaky-soft); color: var(--shaky); border-color: var(--shaky); }
+  .g-wrong { background: var(--bad-soft); color: var(--bad); border-color: var(--bad); }
+  .reveal { margin-top: 16px; padding-top: 14px; border-top: 1px dashed var(--line); }
+  .reveal .ans { font-size: 18px; font-weight: 600; }
+  .reveal .alt { color: var(--muted); font-size: 14px; margin-top: 4px; }
+  .reveal .note { margin-top: 10px; font-size: 15px; }
+  .reveal .yours { color: var(--muted); font-size: 14px; margin-bottom: 8px; }
+  .hidden { display: none; }
+  .summary h2 { margin: 0 0 6px; font-size: 22px; }
+  .score { font-size: 40px; font-weight: 700; color: var(--accent); margin: 4px 0 10px; }
+  .review { margin: 16px 0 0; padding: 0; list-style: none; }
+  .review li { border-top: 1px solid var(--line); padding: 12px 0; font-size: 15px; }
+  .review .r { font-size: 12px; font-weight: 700; margin-right: 6px; }
+  .copybox { width: 100%; min-height: 90px; font: 13px/1.4 ui-monospace, Menlo, monospace; margin-top: 8px; }
+  .muted { color: var(--muted); font-size: 14px; }
+  .past { margin-top: 28px; }
+  .past h3 { font-size: 14px; color: var(--muted); font-weight: 600; margin: 0 0 8px; }
+  .past a { display: block; color: var(--ink); text-decoration: none; padding: 10px 0; border-top: 1px solid var(--line); font-size: 15px; }
+  .past a.on { color: var(--accent); font-weight: 600; }
+  .past .done { float: right; color: var(--muted); font-size: 13px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1 id="title">本周英文小测</h1>
+    <p id="subtitle"></p>
+  </header>
+  <div class="bar"><div id="progress"></div></div>
+
+  <div id="quiz" class="card"></div>
+
+  <div id="summary" class="card summary hidden"></div>
+
+  <nav id="past" class="past"></nav>
+</div>
+
+<script>
+if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js");
+
+function esc(s) {
+  return String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+}
+
+async function boot() {
+  let list = [];
+  try { list = await (await fetch("quizzes/index.json", { cache: "no-store" })).json(); } catch (_) {}
+  if (!list.length) {
+    document.getElementById("quiz").innerHTML = "<p>还没有测验。每周六上午 10 点更新。</p>";
+    return;
+  }
+  const want = new URLSearchParams(location.search).get("q") || list[0].date;
+  const entry = list.find(x => x.date === want) || list[0];
+  const quiz = await (await fetch(`quizzes/${entry.date}.json`, { cache: "no-store" })).json();
+  const scores = JSON.parse(localStorage.getItem("scores") || "{}");
+  document.getElementById("past").innerHTML = list.length > 1
+    ? "<h3>往期测验</h3>" + list.map(x =>
+        `<a href="?q=${x.date}" class="${x.date === entry.date ? "on" : ""}">${esc(x.title)}` +
+        (scores[x.date] ? `<span class="done">${scores[x.date]}</span>` : "") + "</a>").join("")
+    : "";
+  start(quiz);
+}
+
+function start(QUIZ) {
+
+const TYPE_LABEL = {
+  recall:    ["看意思写英文", "根据中文或释义，写出地道的英文说法。"],
+  chinglish: ["改写 Chinglish", "把这句话改得更地道、更像母语记者会写的。"],
+  cloze:     ["新闻语境填空", "选出最适合填进空格的词。"],
+  synonym:   ["辨析近义词", "选出在这个语境里最准确的一个。"]
+};
+
+const qs = QUIZ.questions;
+let i = 0;
+const results = [];   // {q, result, yours}
+
+document.getElementById("title").textContent = QUIZ.title || "本周英文小测";
+document.getElementById("subtitle").textContent =
+  (QUIZ.subtitle || "") + (QUIZ.subtitle ? " · " : "") + qs.length + " 题";
+
+function setProgress() {
+  document.getElementById("progress").style.width = (i / qs.length * 100) + "%";
+}
+
+function revealBlock(q, yours) {
+  const alts = (q.alternatives && q.alternatives.length)
+    ? `<div class="alt">也可以说：${q.alternatives.map(esc).join(" / ")}</div>` : "";
+  const mine = yours !== undefined
+    ? `<div class="yours">你的答案：${yours.trim() ? esc(yours) : "（空）"}</div>` : "";
+  const note = q.note ? `<div class="note">${esc(q.note)}</div>` : "";
+  return `<div class="reveal">${mine}<div class="ans">${esc(q.answer)}</div>${alts}${note}</div>`;
+}
+
+function render() {
+  setProgress();
+  if (i >= qs.length) return finish();
+  const q = qs[i];
+  const [label, instr] = TYPE_LABEL[q.type] || ["练习", ""];
+  const el = document.getElementById("quiz");
+  const head = `<span class="tag">${label}</span><span class="count">${i + 1} / ${qs.length}</span>
+    <div class="instr">${esc(q.instruction || instr)}</div>
+    <div class="prompt">${esc(q.prompt)}</div>`;
+
+  if (q.choices && q.choices.length) {
+    el.innerHTML = head + `<div class="choices">${
+      q.choices.map((c, k) => `<button class="choice" data-k="${k}">${esc(c)}</button>`).join("")
+    }</div><div id="after"></div>`;
+    el.querySelectorAll(".choice").forEach(b => b.onclick = () => {
+      const picked = q.choices[+b.dataset.k];
+      const ok = picked === q.answer;
+      el.querySelectorAll(".choice").forEach(x => {
+        x.disabled = true;
+        if (q.choices[+x.dataset.k] === q.answer) x.classList.add("right");
+      });
+      if (!ok) b.classList.add("wrong");
+      results.push({ q, result: ok ? "right" : "wrong", yours: picked });
+      const note = q.note ? `<div class="reveal"><div class="note">${esc(q.note)}</div></div>` : "";
+      document.getElementById("after").innerHTML = note +
+        `<button class="btn" id="next">${i + 1 < qs.length ? "下一题" : "看结果"}</button>`;
+      document.getElementById("next").onclick = () => { i++; render(); };
+    });
+  } else {
+    el.innerHTML = head + `<textarea id="input" placeholder="先自己写，再看答案" autocapitalize="off" autocorrect="off" spellcheck="false"></textarea>
+      <button class="btn" id="show">看答案</button><div id="after"></div>`;
+    document.getElementById("show").onclick = () => {
+      const yours = document.getElementById("input").value;
+      document.getElementById("show").remove();
+      document.getElementById("after").innerHTML = revealBlock(q, yours) +
+        `<div class="grade">
+           <button class="g-right" data-r="right">写对了</button>
+           <button class="g-shaky" data-r="shaky">差一点</button>
+           <button class="g-wrong" data-r="wrong">没想起来</button>
+         </div>`;
+      document.querySelectorAll(".grade button").forEach(b => b.onclick = () => {
+        results.push({ q, result: b.dataset.r, yours });
+        i++; render();
+      });
+    };
+  }
+  window.scrollTo({ top: 0, behavior: "smooth" });
+}
+
+function finish() {
+  document.getElementById("quiz").classList.add("hidden");
+  const right = results.filter(r => r.result === "right").length;
+  const missed = results.filter(r => r.result !== "right");
+  const mark = { right: "✓", shaky: "△", wrong: "✗" };
+  const color = { right: "var(--good)", shaky: "var(--shaky)", wrong: "var(--bad)" };
+  const report = results.map((r, k) =>
+    `${k + 1}. [${r.result}] ${r.q.answer}${r.q.entry_id ? " (" + r.q.entry_id + ")" : ""}`).join("\n");
+  const s = document.getElementById("summary");
+  s.classList.remove("hidden");
+  s.innerHTML = `<h2>做完啦</h2>
+    <div class="score">${right} / ${results.length}</div>
+    <div class="muted">${missed.length ? "下面是需要再看一眼的：" : "全对，本周的词都拿下了。"}</div>
+    <ul class="review">${missed.map(r =>
+      `<li><span class="r" style="color:${color[r.result]}">${mark[r.result]}</span>${esc(r.q.prompt)}<br><b>${esc(r.q.answer)}</b></li>`
+    ).join("")}</ul>
+    <p class="muted" style="margin-top:18px">想让下周重点复习错题？把下面这段复制给 Claude：</p>
+    <textarea class="copybox" readonly>本周小测结果 ${QUIZ.date || ""}\n${report}</textarea>
+    <button class="btn ghost" id="again">再做一遍</button>`;
+  document.getElementById("again").onclick = () => { i = 0; results.length = 0; s.classList.add("hidden");
+    document.getElementById("quiz").classList.remove("hidden"); render(); };
+  const scores = JSON.parse(localStorage.getItem("scores") || "{}");
+  scores[QUIZ.date] = `${right}/${results.length}`;
+  localStorage.setItem("scores", JSON.stringify(scores));
+}
+
+render();
+}
+
+boot();
+</script>
+</body>
+</html>
