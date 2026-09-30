@@ -94,6 +94,29 @@
   .copybox { width: 100%; min-height: 90px; font: 13px/1.4 ui-monospace, Menlo, monospace; margin-top: 8px; }
   .muted { color: var(--muted); font-size: 14px; }
   .tools { margin-top: 22px; }
+  .ctx { font-size: 13px; color: var(--muted); margin: 8px 0 2px; }
+  .toks { font-size: 19px; line-height: 2.1; margin: 8px 0 14px; }
+  .tok { display: inline; font: inherit; color: var(--ink); background: none; border: 0; border-bottom: 2px dotted var(--line); padding: 1px 2px; margin: 0 1px; cursor: pointer; border-radius: 4px; }
+  .tok.sel { background: var(--accent-soft); border-bottom-color: var(--accent); }
+  .tok.found { background: var(--good-soft); color: var(--good); border-bottom-color: var(--good); }
+  .tok.missed { background: var(--shaky-soft); color: var(--shaky); border-bottom-color: var(--shaky); }
+  .tok.bad { background: var(--bad-soft); color: var(--bad); text-decoration: line-through; }
+  .fixq { margin: 14px 0 6px; font-size: 15px; }
+  .fixq b { color: var(--bad); }
+  .legend { font-size: 12px; color: var(--muted); }
+  .tpl { font-size: 19px; line-height: 2.2; margin: 8px 0 12px; }
+  .blank { font: inherit; font-size: 17px; width: 7.5em; padding: 2px 6px; border: 0; border-bottom: 2px solid var(--accent); background: var(--accent-soft); color: var(--ink); border-radius: 4px; }
+  .blank.ok { border-bottom-color: var(--good); background: var(--good-soft); }
+  .blank.no { border-bottom-color: var(--bad); background: var(--bad-soft); }
+  .fixans { font-size: 13px; color: var(--good); font-weight: 600; margin: 0 4px; }
+  .verdict { font-size: 15px; font-weight: 700; margin-top: 12px; }
+  .jot { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 14px; margin-bottom: 12px; }
+  .jot h3 { margin: 0 0 8px; font-size: 16px; }
+  .jot input, .jot textarea { width: 100%; font: inherit; font-size: 15px; color: var(--ink); background: var(--bg); border: 1px solid var(--line); border-radius: 10px; padding: 9px 11px; margin-bottom: 8px; }
+  .jot textarea { min-height: 48px; }
+  .jot .row { display: flex; gap: 8px; }
+  .jot .row .btn { margin-top: 0; flex: 1; padding: 10px; font-size: 15px; }
+  .jot .saved { font-size: 13px; color: var(--good); margin-top: 6px; }
   .tools .btn { font-size: 15px; }
   .stats { display: flex; gap: 8px; margin: 12px 0 0; }
   .stat { flex: 1; background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 8px; text-align: center; }
@@ -254,7 +277,9 @@ const TYPE_LABEL = {
   recall:    ["看意思写英文", "根据中文或释义，写出地道的英文说法。"],
   chinglish: ["改写 Chinglish", "把这句话改得更地道、更像母语记者会写的。"],
   cloze:     ["语境填空", "选出最适合填进空格的词。"],
-  synonym:   ["辨析近义词", "选出在这个语境里最准确的一个。"]
+  synonym:   ["辨析近义词", "选出在这个语境里最准确的一个。"],
+  spot:      ["找错改错", "点出你觉得有问题的词（可以点好几个），再点“检查”。"],
+  fill:      ["句子填空", "只填空格里的词。想不起来可以点“提示”。"]
 };
 
 function start(questions) {
@@ -301,33 +326,59 @@ function start(questions) {
       `今天已做 ${c.d.done} 题 · 待复习 ${c.due.length} · 今日新题还剩 ${Math.min(c.newLeft, c.unseen.length)}`;
     document.getElementById("progress").style.width = (questions.length ? c.mastered / questions.length * 100 : 0) + "%";
     const log = load("log", []), sent = load("sentUpTo", 0);
-    const pending = log.filter(x => x.t > sent).length;
+    const pending = log.filter(x => x.t > sent).length + load("notes", []).filter(n => n.t > sent).length;
+    const notes = load("notes", []), unsentNotes = notes.filter(n => n.t > sent).length;
     document.getElementById("tools").innerHTML = `
+      <div class="jot"><h3>✍️ 随手记</h3>
+        <input id="jotText" placeholder="听到或看到的词、句子，或想问的中文说法" autocapitalize="off" autocorrect="off" spellcheck="false">
+        <textarea id="jotCtx" placeholder="（可选）在哪里遇到的？比如：点菜时服务员说的"></textarea>
+        <div class="row"><button class="btn ghost" id="jotSave">只保存</button><button class="btn" id="jotAsk">保存并问 Claude</button></div>
+        <div class="saved" id="jotMsg">${unsentNotes ? `已存 ${unsentNotes} 条，还没发给 Claude` : ""}</div>
+      </div>
       <div class="stats">
         <div class="stat"><b>${questions.length}</b><span>题库总数</span></div>
         <div class="stat"><b>${Object.keys(srs).length}</b><span>做过</span></div>
         <div class="stat"><b>${c.mastered}</b><span>已掌握</span></div>
       </div>
-      <button class="btn ghost" id="export">📋 把答题记录复制给 Claude${pending ? `（${pending} 条新记录）` : ""}</button>
+      <button class="btn ghost" id="export">📋 把答题记录和随手记复制给 Claude${pending ? `（${pending} 条新记录）` : ""}</button>
       <div class="muted" style="margin-top:6px">红色进度条 = 已掌握的比例（连续答对 4 次以上）</div>`;
     document.getElementById("export").onclick = exportLog;
+    const jot = ask => {
+      const text = document.getElementById("jotText").value.trim();
+      if (!text) { document.getElementById("jotText").focus(); return; }
+      const ctx = document.getElementById("jotCtx").value.trim();
+      const all = load("notes", []); all.push({ t: Date.now(), text, ctx }); save("notes", all.slice(-300));
+      if (ask) {
+        const lines = ["我在生活中遇到一个英文表达，请像一位英文老师一样用中文给我讲清楚（意思、语气/场合、常见搭配、一两个例句；如果我写的是中文，就告诉我地道的英文说法）。",
+          `表达：${text}`, ctx ? `场景：${ctx}` : "",
+          "最后请用一行“📌 生词本：……”总结（英文表达 + 中文说明）。"].filter(Boolean).join("\n");
+        try { navigator.clipboard.writeText(lines); } catch (_) {}
+        window.location.href = "https://claude.ai/new?q=" + encodeURIComponent(lines);
+      } else header();
+    };
+    document.getElementById("jotSave").onclick = () => jot(false);
+    document.getElementById("jotAsk").onclick = () => jot(true);
   }
 
   function exportLog() {
     const log = load("log", []), sent = load("sentUpTo", 0);
     const items = log.filter(x => x.t > sent && byId[x.id]);
-    if (!items.length) { alert("没有新的答题记录。"); return; }
+    const notes = load("notes", []).filter(n => n.t > sent);
+    if (!items.length && !notes.length) { alert("没有新的记录。"); return; }
     const mark = { right: "✓", shaky: "△", wrong: "✗" };
+    const noteText = notes.length ? "\n\n随手记（请解释并记进生词本）\n" + notes.map((n, k) =>
+      `${k + 1}. ${n.text}${n.ctx ? "（" + n.ctx + "）" : ""}`).join("\n") : "";
     const text = "手机APP答题记录\n" + items.map((x, k) => {
       const q = byId[x.id];
       return `${k + 1}. ${mark[x.result]} [${x.result}] ${q.answer}${q.entry_id ? " (" + q.entry_id + ")" : ""}` +
         (x.result !== "right" && x.yours && x.yours.trim() ? `\n   我写的：${x.yours.trim()}` : "");
-    }).join("\n");
-    const done = () => { save("sentUpTo", items[items.length - 1].t); header(); alert("已复制！回到 Mac 上的 Claude，粘贴发给我就行。"); };
+    }).join("\n") + noteText;
+    const lastT = Math.max(...items.map(x => x.t), ...notes.map(n => n.t));
+    const done = () => { save("sentUpTo", lastT); header(); alert("已复制！回到 Mac 上的 Claude，粘贴发给我就行。"); };
     navigator.clipboard.writeText(text).then(done, () => {
       document.getElementById("tools").insertAdjacentHTML("beforeend",
         `<textarea class="copybox" readonly>${esc(text)}</textarea><div class="muted">自动复制失败：长按上面的文字 → 全选 → 拷贝。</div>`);
-      save("sentUpTo", items[items.length - 1].t);
+      save("sentUpTo", lastT);
     });
   }
 
@@ -363,7 +414,94 @@ function start(questions) {
       <div class="instr">${esc(q.instruction || instr)}</div>
       <div class="prompt">${esc(q.prompt)}</div>`;
 
-    if (q.choices && q.choices.length) {
+    const shuffle = a => a.map(v => [Math.random(), v]).sort((x, y) => x[0] - y[0]).map(x => x[1]);
+    const VERDICT = { right: ["全对 ✓", "var(--good)"], shaky: ["差一点 △", "var(--shaky)"], wrong: ["再接再厉 ✗", "var(--bad)"] };
+    const finishCard = (result, yours) => {
+      grade(q, result, yours);
+      const [vt, vc] = VERDICT[result];
+      const alts = (q.alternatives && q.alternatives.length) ? `<div class="alt">也可以说：${q.alternatives.map(esc).join(" / ")}</div>` : "";
+      document.getElementById("after").insertAdjacentHTML("beforeend",
+        `<div class="verdict" style="color:${vc}">${vt}</div>
+         <div class="reveal"><div class="ans">${esc(q.answer)}</div>${alts}${q.note ? `<div class="note">${esc(q.note)}</div>` : ""}</div>` +
+        askBoxHtml() + `<button class="btn" id="next">下一题</button>`);
+      wireAsk(document.getElementById("after"), q, yours);
+      document.getElementById("next").onclick = render;
+      header();
+    };
+
+    if (q.type === "spot") {
+      const sent = q.sentence, toks = [];
+      sent.replace(/\S+/g, (w, at) => { toks.push({ w, a: at, b: at + w.length }); return w; });
+      const spans = q.errors.map(e => { const a = sent.indexOf(e.wrong); return { ...e, a, b: a + e.wrong.length }; });
+      const errOf = t => spans.findIndex(sp => t.a < sp.b && t.b > sp.a);
+      el.innerHTML = `<span class="tag">${label}</span>${badge}
+        <div class="instr">${esc(instr)}</div>
+        ${q.context ? `<div class="ctx">${esc(q.context)}</div>` : ""}
+        <div class="toks">${toks.map((t, k) => `<button class="tok" data-k="${k}">${esc(t.w)}</button>`).join(" ")}</div>
+        <button class="btn" id="check">检查</button><div id="after"></div>`;
+      const sel = new Set();
+      el.querySelectorAll(".tok").forEach(b => b.onclick = () => {
+        const k = +b.dataset.k; sel.has(k) ? sel.delete(k) : sel.add(k); b.classList.toggle("sel");
+      });
+      document.getElementById("check").onclick = () => {
+        document.getElementById("check").remove();
+        const found = spans.map(() => false); let badTaps = 0;
+        el.querySelectorAll(".tok").forEach(b => {
+          const k = +b.dataset.k, e = errOf(toks[k]); b.disabled = true; b.classList.remove("sel");
+          if (e >= 0) { if (sel.has(k)) found[e] = true; }
+          else if (sel.has(k)) { b.classList.add("bad"); badTaps++; }
+        });
+        el.querySelectorAll(".tok").forEach(b => { const e = errOf(toks[+b.dataset.k]); if (e >= 0) b.classList.add(found[e] ? "found" : "missed"); });
+        const nFound = found.filter(Boolean).length;
+        document.getElementById("after").innerHTML = `<div class="legend">绿色 = 你找到的错误 · 橙色 = 漏掉的错误 · 红色划线 = 其实没问题</div>
+          <div class="muted" style="margin-top:6px">共 ${spans.length} 处错误，你找到了 ${nFound} 处。现在逐个改：</div><div id="fixes"></div>`;
+        const fixRight = [];
+        const askFix = i => {
+          if (i >= spans.length) {
+            const allFix = fixRight.every(Boolean), allFound = nFound === spans.length;
+            const result = allFix && allFound && !badTaps ? "right" : (fixRight.filter(Boolean).length >= spans.length / 2 ? "shaky" : "wrong");
+            return finishCard(result, `找到 ${nFound}/${spans.length} 处；改对 ${fixRight.filter(Boolean).length}/${spans.length} 处`);
+          }
+          const sp = spans[i], box = document.getElementById("fixes");
+          box.insertAdjacentHTML("beforeend", `<div class="fixq">${spans.length > 1 ? `第 ${i + 1} 处：` : ""}<b>${esc(sp.wrong)}</b> 应该改成</div>
+            <div class="choices" id="fix${i}">${shuffle(sp.options).map(o => `<button class="choice">${esc(o)}</button>`).join("")}</div>`);
+          document.querySelectorAll(`#fix${i} .choice`).forEach(b => b.onclick = () => {
+            const ok = b.textContent === sp.right; fixRight[i] = ok;
+            document.querySelectorAll(`#fix${i} .choice`).forEach(x => { x.disabled = true; if (x.textContent === sp.right) x.classList.add("right"); });
+            if (!ok) b.classList.add("wrong");
+            askFix(i + 1);
+          });
+        };
+        askFix(0);
+      };
+    } else if (q.type === "fill") {
+      let bi = 0;
+      const html = esc(q.template).replace(/\{([^}]+)\}/g, () => `<input class="blank" data-i="${bi++}" autocapitalize="off" autocorrect="off" spellcheck="false">`);
+      el.innerHTML = head + `<div class="tpl">${html}</div>
+        <div class="row" style="display:flex;gap:8px"><button class="btn ghost" id="hint" style="flex:1">提示</button><button class="btn" id="check" style="flex:2">检查</button></div>
+        <div id="after"></div>`;
+      let usedHint = false;
+      document.getElementById("hint").onclick = () => {
+        usedHint = true;
+        el.querySelectorAll(".blank").forEach(inp => {
+          const a = q.blanks[+inp.dataset.i].answer;
+          inp.placeholder = a.split(" ").map(w => w[0] + "_".repeat(Math.max(0, w.length - 1))).join(" ");
+        });
+      };
+      document.getElementById("check").onclick = () => {
+        el.querySelectorAll(".row").forEach(r => r.remove());
+        let nOk = 0; const typed = [];
+        el.querySelectorAll(".blank").forEach(inp => {
+          const bl = q.blanks[+inp.dataset.i], v = inp.value;
+          const ok = [bl.answer, ...(bl.alts || [])].some(x => norm(x) === norm(v));
+          inp.disabled = true; inp.classList.add(ok ? "ok" : "no"); typed.push(v || "（空）");
+          if (ok) nOk++; else inp.insertAdjacentHTML("afterend", `<span class="fixans">→ ${esc(bl.answer)}</span>`);
+        });
+        const n = q.blanks.length;
+        const result = nOk === n ? (usedHint ? "shaky" : "right") : (nOk >= n / 2 ? "shaky" : "wrong");
+        finishCard(result, typed.join(" / "));
+      };
+    } else if (q.choices && q.choices.length) {
       el.innerHTML = head + `<div class="choices">${
         q.choices.map((c, k) => `<button class="choice" data-k="${k}">${esc(c)}</button>`).join("")
       }</div><div id="after"></div>`;
