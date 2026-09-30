@@ -71,6 +71,16 @@
   .reveal .note { margin-top: 10px; font-size: 15px; }
   .reveal .yours { color: var(--muted); font-size: 14px; margin-bottom: 8px; }
   .hidden { display: none; }
+  .diff { margin: 10px 0 4px; font-size: 15px; line-height: 1.7; }
+  .diff .lbl { color: var(--muted); font-size: 12px; font-weight: 600; margin-right: 4px; }
+  .diff del { color: var(--bad); background: var(--bad-soft); text-decoration: line-through; border-radius: 3px; padding: 0 2px; }
+  .diff ins { color: var(--good); background: var(--good-soft); text-decoration: none; font-weight: 600; border-radius: 3px; padding: 0 2px; }
+  .check { font-size: 14px; margin: 6px 0 0; padding: 8px 10px; border-radius: 8px; }
+  .check.ok { background: var(--good-soft); color: var(--good); }
+  .check.no { background: var(--bad-soft); color: var(--bad); }
+  .check.tip { background: var(--shaky-soft); color: var(--shaky); }
+  .grade button.suggest { outline: 3px solid currentColor; outline-offset: 2px; }
+  .suggest-lbl { font-size: 13px; color: var(--muted); margin-top: 12px; }
   .summary h2 { margin: 0 0 6px; font-size: 22px; }
   .score { font-size: 40px; font-weight: 700; color: var(--accent); margin: 4px 0 10px; }
   .review { margin: 16px 0 0; padding: 0; list-style: none; }
@@ -105,6 +115,56 @@ if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js");
 
 function esc(s) {
   return String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+}
+
+// ---- answer checking: word diff + key phrase + known traps ----
+const norm = s => String(s || "").toLowerCase().replace(/[’‘]/g, "'").replace(/[“”]/g, '"')
+  .replace(/[^a-z0-9'\s-]/g, " ").replace(/\s+/g, " ").trim();
+const toks = s => norm(s).split(" ").filter(Boolean);
+
+function lcsMarks(a, b) {
+  const n = a.length, m = b.length, dp = Array.from({ length: n + 1 }, () => new Array(m + 1).fill(0));
+  for (let i = n - 1; i >= 0; i--) for (let j = m - 1; j >= 0; j--)
+    dp[i][j] = a[i] === b[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
+  const inA = new Array(n).fill(false), inB = new Array(m).fill(false);
+  for (let i = 0, j = 0; i < n && j < m;) {
+    if (a[i] === b[j]) { inA[i] = inB[j] = true; i++; j++; }
+    else if (dp[i + 1][j] >= dp[i][j + 1]) i++; else j++;
+  }
+  return { inA, inB, ratio: (n + m) ? 2 * dp[0][0] / (n + m) : 0 };
+}
+
+function checkAnswer(q, yours) {
+  const targets = [q.answer, ...(q.alternatives || [])];
+  const u = toks(yours);
+  let best = null;
+  for (const t of targets) {
+    const tt = toks(t), r = lcsMarks(u, tt);
+    if (!best || r.ratio > best.ratio) best = { ...r, t: tt, raw: t };
+  }
+  const exact = targets.some(t => norm(t) === norm(yours));
+  const padded = " " + norm(yours) + " ";
+  const keys = (q.key ? [].concat(q.key) : []).map(k => ({ k, ok: padded.includes(" " + norm(k) + " ") }));
+  const traps = (q.traps || []).filter(t => { try { return new RegExp(t.re, "i").test(yours); } catch (_) { return false; } });
+  const keysOk = keys.every(k => k.ok);
+  let suggest = "wrong";
+  if (exact || (keysOk && !traps.length && best.ratio >= 0.85)) suggest = "right";
+  else if ((keys.length && keysOk) || best.ratio >= 0.6) suggest = "shaky";
+  return { best, exact, keys, traps, suggest };
+}
+
+function feedbackHtml(q, yours) {
+  if (!yours.trim()) return "";
+  const c = checkAnswer(q, yours);
+  if (c.exact) return `<div class="check ok">✓ 和参考答案完全一致</div>`;
+  const mine = toks(yours).map((w, i) => c.best.inA[i] ? esc(w) : `<del>${esc(w)}</del>`).join(" ");
+  const ref = c.best.t.map((w, i) => c.best.inB[i] ? esc(w) : `<ins>${esc(w)}</ins>`).join(" ");
+  let out = `<div class="diff"><span class="lbl">你写的</span>${mine}<br><span class="lbl">对照</span>${ref}</div>`;
+  for (const k of c.keys) out += k.ok
+    ? `<div class="check ok">✓ 关键表达用对了：${esc(k.k)}</div>`
+    : `<div class="check no">✗ 关键表达没用上：${esc(k.k)}</div>`;
+  for (const t of c.traps) out += `<div class="check tip">⚠︎ ${esc(t.tip)}</div>`;
+  return out;
 }
 
 // Quizzes are AES-GCM encrypted; the key lives only on the user's devices.
@@ -180,10 +240,10 @@ function setProgress() {
 function revealBlock(q, yours) {
   const alts = (q.alternatives && q.alternatives.length)
     ? `<div class="alt">也可以说：${q.alternatives.map(esc).join(" / ")}</div>` : "";
-  const mine = yours !== undefined
-    ? `<div class="yours">你的答案：${yours.trim() ? esc(yours) : "（空）"}</div>` : "";
+  const mine = yours !== undefined && !yours.trim() ? `<div class="yours">你的答案：（空）</div>` : "";
+  const fb = yours !== undefined ? feedbackHtml(q, yours) : "";
   const note = q.note ? `<div class="note">${esc(q.note)}</div>` : "";
-  return `<div class="reveal">${mine}<div class="ans">${esc(q.answer)}</div>${alts}${note}</div>`;
+  return `<div class="reveal">${mine}<div class="ans">${esc(q.answer)}</div>${alts}${fb}${note}</div>`;
 }
 
 function render() {
@@ -220,12 +280,16 @@ function render() {
     document.getElementById("show").onclick = () => {
       const yours = document.getElementById("input").value;
       document.getElementById("show").remove();
+      const sug = yours.trim() ? checkAnswer(q, yours).suggest : "wrong";
+      const sugText = { right: "写对了", shaky: "差一点", wrong: "没想起来" }[sug];
       document.getElementById("after").innerHTML = revealBlock(q, yours) +
-        `<div class="grade">
+        `<div class="suggest-lbl">建议打分：${sugText}（可以自己改）</div>
+         <div class="grade">
            <button class="g-right" data-r="right">写对了</button>
            <button class="g-shaky" data-r="shaky">差一点</button>
            <button class="g-wrong" data-r="wrong">没想起来</button>
          </div>`;
+      document.querySelector(`.grade [data-r="${sug}"]`).classList.add("suggest");
       document.querySelectorAll(".grade button").forEach(b => b.onclick = () => {
         results.push({ q, result: b.dataset.r, yours });
         i++; render();
@@ -242,7 +306,8 @@ function finish() {
   const mark = { right: "✓", shaky: "△", wrong: "✗" };
   const color = { right: "var(--good)", shaky: "var(--shaky)", wrong: "var(--bad)" };
   const report = results.map((r, k) =>
-    `${k + 1}. [${r.result}] ${r.q.answer}${r.q.entry_id ? " (" + r.q.entry_id + ")" : ""}`).join("\n");
+    `${k + 1}. [${r.result}] ${r.q.answer}${r.q.entry_id ? " (" + r.q.entry_id + ")" : ""}` +
+    (r.result !== "right" && r.yours && r.yours.trim() ? `\n   我写的：${r.yours.trim()}` : "")).join("\n");
   const s = document.getElementById("summary");
   s.classList.remove("hidden");
   s.innerHTML = `<h2>做完啦</h2>
@@ -251,7 +316,7 @@ function finish() {
     <ul class="review">${missed.map(r =>
       `<li><span class="r" style="color:${color[r.result]}">${mark[r.result]}</span>${esc(r.q.prompt)}<br><b>${esc(r.q.answer)}</b></li>`
     ).join("")}</ul>
-    <p class="muted" style="margin-top:18px">想让下周重点复习错题？把下面这段复制给 Claude：</p>
+    <p class="muted" style="margin-top:18px">把下面这段复制给 Claude：我会逐句点评你写的句子，并在下周重点复习错题。</p>
     <textarea class="copybox" readonly>本周小测结果 ${QUIZ.date || ""}\n${report}</textarea>
     <button class="btn ghost" id="again">再做一遍</button>`;
   document.getElementById("again").onclick = () => { i = 0; results.length = 0; s.classList.add("hidden");
