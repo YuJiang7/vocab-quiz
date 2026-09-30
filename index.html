@@ -81,6 +81,11 @@
   .check.tip { background: var(--shaky-soft); color: var(--shaky); }
   .grade button.suggest { outline: 3px solid currentColor; outline-offset: 2px; }
   .suggest-lbl { font-size: 13px; color: var(--muted); margin-top: 12px; }
+  .ask { margin-top: 14px; padding: 12px; border-radius: 10px; background: var(--bg); border: 1px dashed var(--line); }
+  .ask .lbl { font-size: 13px; font-weight: 600; color: var(--muted); margin-bottom: 6px; }
+  .ask textarea { min-height: 56px; font-size: 15px; background: var(--card); }
+  .ask .btn { margin-top: 8px; padding: 10px 14px; font-size: 15px; }
+  .ask .hint { font-size: 12px; color: var(--muted); margin-top: 6px; }
   .summary h2 { margin: 0 0 6px; font-size: 22px; }
   .score { font-size: 40px; font-weight: 700; color: var(--accent); margin: 4px 0 10px; }
   .review { margin: 16px 0 0; padding: 0; list-style: none; }
@@ -88,6 +93,13 @@
   .review .r { font-size: 12px; font-weight: 700; margin-right: 6px; }
   .copybox { width: 100%; min-height: 90px; font: 13px/1.4 ui-monospace, Menlo, monospace; margin-top: 8px; }
   .muted { color: var(--muted); font-size: 14px; }
+  .tools { margin-top: 22px; }
+  .tools .btn { font-size: 15px; }
+  .stats { display: flex; gap: 8px; margin: 12px 0 0; }
+  .stat { flex: 1; background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 8px; text-align: center; }
+  .stat b { display: block; font-size: 20px; color: var(--accent); }
+  .stat span { font-size: 12px; color: var(--muted); }
+  .again-tag { display: inline-block; font-size: 12px; font-weight: 600; color: var(--bad); background: var(--bad-soft); padding: 3px 8px; border-radius: 999px; margin-left: 6px; }
   .past { margin-top: 28px; }
   .past h3 { font-size: 14px; color: var(--muted); font-weight: 600; margin: 0 0 8px; }
   .past a { display: block; color: var(--ink); text-decoration: none; padding: 10px 0; border-top: 1px solid var(--line); font-size: 15px; }
@@ -98,16 +110,14 @@
 <body>
 <div class="wrap">
   <header>
-    <h1 id="title">本周英文小测</h1>
+    <h1 id="title">英文小测</h1>
     <p id="subtitle"></p>
   </header>
   <div class="bar"><div id="progress"></div></div>
 
   <div id="quiz" class="card"></div>
 
-  <div id="summary" class="card summary hidden"></div>
-
-  <nav id="past" class="past"></nav>
+  <div id="tools" class="tools"></div>
 </div>
 
 <script>
@@ -167,6 +177,35 @@ function feedbackHtml(q, yours) {
   return out;
 }
 
+// ---- "问 Claude": open the Claude app with this question pre-filled ----
+function askBoxHtml() {
+  return `<div class="ask"><div class="lbl">💬 对这道题还有疑问？</div>
+    <textarea class="askq" placeholder="比如：我用 since 可以吗？"></textarea>
+    <button class="btn ghost askbtn">问 Claude</button>
+    <div class="hint">会打开 Claude App 并自动带上题目和你的答案（同时已复制到剪贴板，没带上就粘贴）</div></div>`;
+}
+
+function wireAsk(root, q, yours) {
+  const btn = root.querySelector(".askbtn");
+  if (!btn) return;
+  btn.onclick = async () => {
+    const question = root.querySelector(".askq").value.trim() || "请帮我看看我的答案哪里可以更好。";
+    const lines = [
+      "我在做英文小测，想请你像一位严格但友善的英文编辑一样帮我解答（请用中文回答，例句用英文）。",
+      `题目：${q.prompt}`,
+      q.choices ? `选项：${q.choices.join(" / ")}` : "",
+      `参考答案：${q.answer}`,
+      q.alternatives && q.alternatives.length ? `也可以说：${q.alternatives.join(" / ")}` : "",
+      q.note ? `讲解：${q.note}` : "",
+      yours ? `我的答案：${yours}` : "",
+      `我的问题：${question}`,
+      "最后请用一行“📌 生词本：……”总结我该记住的点（英文表达 + 中文说明）。"
+    ].filter(Boolean).join("\n");
+    try { await navigator.clipboard.writeText(lines); } catch (_) {}
+    window.location.href = "https://claude.ai/new?q=" + encodeURIComponent(lines);
+  };
+}
+
 // Quizzes are AES-GCM encrypted; the key lives only on the user's devices.
 const fromB64 = s => Uint8Array.from(atob(s.replace(/-/g, "+").replace(/_/g, "/") + "===".slice((s.length + 3) % 4)), c => c.charCodeAt(0));
 
@@ -194,139 +233,178 @@ async function boot() {
   }
   const keyText = localStorage.getItem("quizKey");
   if (!keyText) return askForKey("这是私人测验，需要钥匙才能打开。<br>第一次使用：把邮件里的钥匙粘贴到下面。");
-
-  let list = [];
-  try { list = await (await fetch("quizzes/index.json", { cache: "no-store" })).json(); } catch (_) {}
-  if (!list.length) {
-    document.getElementById("quiz").innerHTML = "<p>还没有测验。每周六上午 10 点更新。</p>";
-    return;
-  }
-  const want = new URLSearchParams(location.search).get("q") || list[0].date;
-  const entry = list.find(x => x.date === want) || list[0];
-  const blob = await (await fetch(`quizzes/${entry.date}.enc.json`, { cache: "no-store" })).json();
-  let quiz;
-  try { quiz = await decrypt(blob, keyText); }
+  let blob;
+  try { blob = await (await fetch("quizzes/bank.enc.json", { cache: "no-store" })).json(); }
+  catch (_) { document.getElementById("quiz").innerHTML = "<p>题库加载失败，请检查网络后重新打开。</p>"; return; }
+  let bank;
+  try { bank = await decrypt(blob, keyText); }
   catch (_) { localStorage.removeItem("quizKey"); return askForKey("钥匙不对，请重新粘贴一次。"); }
-  const scores = JSON.parse(localStorage.getItem("scores") || "{}");
-  document.getElementById("past").innerHTML = list.length > 1
-    ? "<h3>往期测验</h3>" + list.map(x =>
-        `<a href="?q=${x.date}" class="${x.date === entry.date ? "on" : ""}">${esc(x.title)}` +
-        (scores[x.date] ? `<span class="done">${scores[x.date]}</span>` : "") + "</a>").join("")
-    : "";
-  start(quiz);
+  start(bank.questions);
 }
 
-function start(QUIZ) {
+// ---- spaced repetition (Ebbinghaus-style intervals) ----
+const DAY = 86400000, MIN = 60000;
+const INTERVALS = [0, 1, 2, 4, 7, 15, 30, 60];   // days, indexed by box
+const NEW_PER_DAY = 10;
+const load = (k, d) => { try { return JSON.parse(localStorage.getItem(k)) ?? d; } catch (_) { return d; } };
+const save = (k, v) => localStorage.setItem(k, JSON.stringify(v));
+const today = () => new Date().toDateString();
 
 const TYPE_LABEL = {
   recall:    ["看意思写英文", "根据中文或释义，写出地道的英文说法。"],
   chinglish: ["改写 Chinglish", "把这句话改得更地道、更像母语记者会写的。"],
-  cloze:     ["新闻语境填空", "选出最适合填进空格的词。"],
+  cloze:     ["语境填空", "选出最适合填进空格的词。"],
   synonym:   ["辨析近义词", "选出在这个语境里最准确的一个。"]
 };
 
-const qs = QUIZ.questions;
-let i = 0;
-const results = [];   // {q, result, yours}
+function start(questions) {
+  const byId = Object.fromEntries(questions.map(q => [q.id, q]));
+  let srs = load("srs", {});          // id -> {box, due, lapses, last}
+  let lastId = null;
 
-document.getElementById("title").textContent = QUIZ.title || "本周英文小测";
-document.getElementById("subtitle").textContent =
-  (QUIZ.subtitle || "") + (QUIZ.subtitle ? " · " : "") + qs.length + " 题";
-
-function setProgress() {
-  document.getElementById("progress").style.width = (i / qs.length * 100) + "%";
-}
-
-function revealBlock(q, yours) {
-  const alts = (q.alternatives && q.alternatives.length)
-    ? `<div class="alt">也可以说：${q.alternatives.map(esc).join(" / ")}</div>` : "";
-  const mine = yours !== undefined && !yours.trim() ? `<div class="yours">你的答案：（空）</div>` : "";
-  const fb = yours !== undefined ? feedbackHtml(q, yours) : "";
-  const note = q.note ? `<div class="note">${esc(q.note)}</div>` : "";
-  return `<div class="reveal">${mine}<div class="ans">${esc(q.answer)}</div>${alts}${fb}${note}</div>`;
-}
-
-function render() {
-  setProgress();
-  if (i >= qs.length) return finish();
-  const q = qs[i];
-  const [label, instr] = TYPE_LABEL[q.type] || ["练习", ""];
-  const el = document.getElementById("quiz");
-  const head = `<span class="tag">${label}</span><span class="count">${i + 1} / ${qs.length}</span>
-    <div class="instr">${esc(q.instruction || instr)}</div>
-    <div class="prompt">${esc(q.prompt)}</div>`;
-
-  if (q.choices && q.choices.length) {
-    el.innerHTML = head + `<div class="choices">${
-      q.choices.map((c, k) => `<button class="choice" data-k="${k}">${esc(c)}</button>`).join("")
-    }</div><div id="after"></div>`;
-    el.querySelectorAll(".choice").forEach(b => b.onclick = () => {
-      const picked = q.choices[+b.dataset.k];
-      const ok = picked === q.answer;
-      el.querySelectorAll(".choice").forEach(x => {
-        x.disabled = true;
-        if (q.choices[+x.dataset.k] === q.answer) x.classList.add("right");
-      });
-      if (!ok) b.classList.add("wrong");
-      results.push({ q, result: ok ? "right" : "wrong", yours: picked });
-      const note = q.note ? `<div class="reveal"><div class="note">${esc(q.note)}</div></div>` : "";
-      document.getElementById("after").innerHTML = note +
-        `<button class="btn" id="next">${i + 1 < qs.length ? "下一题" : "看结果"}</button>`;
-      document.getElementById("next").onclick = () => { i++; render(); };
-    });
-  } else {
-    el.innerHTML = head + `<textarea id="input" placeholder="先自己写，再看答案" autocapitalize="off" autocorrect="off" spellcheck="false"></textarea>
-      <button class="btn" id="show">看答案</button><div id="after"></div>`;
-    document.getElementById("show").onclick = () => {
-      const yours = document.getElementById("input").value;
-      document.getElementById("show").remove();
-      const sug = yours.trim() ? checkAnswer(q, yours).suggest : "wrong";
-      const sugText = { right: "写对了", shaky: "差一点", wrong: "没想起来" }[sug];
-      document.getElementById("after").innerHTML = revealBlock(q, yours) +
-        `<div class="suggest-lbl">建议打分：${sugText}（可以自己改）</div>
-         <div class="grade">
-           <button class="g-right" data-r="right">写对了</button>
-           <button class="g-shaky" data-r="shaky">差一点</button>
-           <button class="g-wrong" data-r="wrong">没想起来</button>
-         </div>`;
-      document.querySelector(`.grade [data-r="${sug}"]`).classList.add("suggest");
-      document.querySelectorAll(".grade button").forEach(b => b.onclick = () => {
-        results.push({ q, result: b.dataset.r, yours });
-        i++; render();
-      });
-    };
+  function dailyNew() {
+    const d = load("daily", {});
+    return d.date === today() ? d : { date: today(), newDone: 0, extra: 0, done: 0 };
   }
-  window.scrollTo({ top: 0, behavior: "smooth" });
-}
+  function grade(q, result, yours) {
+    const now = Date.now(), s = srs[q.id] || { box: 0, lapses: 0 };
+    const wasNew = !srs[q.id];
+    if (result === "right") { s.box = Math.min(s.box + 1, INTERVALS.length - 1); s.due = now + INTERVALS[s.box] * DAY; }
+    else if (result === "shaky") { s.box = Math.max(1, s.box); s.due = now + DAY; }
+    else { s.box = 0; s.lapses = (s.lapses || 0) + 1; s.due = now + 10 * MIN; }
+    s.last = now; srs[q.id] = s; save("srs", srs);
+    const d = dailyNew(); if (wasNew) d.newDone++; d.done++; save("daily", d);
+    const log = load("log", []);
+    log.push({ id: q.id, t: now, result, yours: (yours || "").slice(0, 300) });
+    save("log", log.slice(-500));
+    lastId = q.id;
+  }
+  function counts() {
+    const now = Date.now(), d = dailyNew();
+    const due = questions.filter(q => srs[q.id] && srs[q.id].due <= now);
+    const unseen = questions.filter(q => !srs[q.id]);
+    const newLeft = Math.max(0, NEW_PER_DAY + d.extra - d.newDone);
+    const mastered = questions.filter(q => srs[q.id] && srs[q.id].box >= 4).length;
+    return { due, unseen, newLeft, mastered, d };
+  }
+  function pick() {
+    const c = counts();
+    const due = c.due.filter(q => q.id !== lastId || c.due.length === 1).sort((a, b) => srs[a.id].due - srs[b.id].due);
+    if (due.length) return due[0];
+    if (c.newLeft > 0 && c.unseen.length) return c.unseen[0];
+    return null;
+  }
 
-function finish() {
-  document.getElementById("quiz").classList.add("hidden");
-  const right = results.filter(r => r.result === "right").length;
-  const missed = results.filter(r => r.result !== "right");
-  const mark = { right: "✓", shaky: "△", wrong: "✗" };
-  const color = { right: "var(--good)", shaky: "var(--shaky)", wrong: "var(--bad)" };
-  const report = results.map((r, k) =>
-    `${k + 1}. [${r.result}] ${r.q.answer}${r.q.entry_id ? " (" + r.q.entry_id + ")" : ""}` +
-    (r.result !== "right" && r.yours && r.yours.trim() ? `\n   我写的：${r.yours.trim()}` : "")).join("\n");
-  const s = document.getElementById("summary");
-  s.classList.remove("hidden");
-  s.innerHTML = `<h2>做完啦</h2>
-    <div class="score">${right} / ${results.length}</div>
-    <div class="muted">${missed.length ? "下面是需要再看一眼的：" : "全对，本周的词都拿下了。"}</div>
-    <ul class="review">${missed.map(r =>
-      `<li><span class="r" style="color:${color[r.result]}">${mark[r.result]}</span>${esc(r.q.prompt)}<br><b>${esc(r.q.answer)}</b></li>`
-    ).join("")}</ul>
-    <p class="muted" style="margin-top:18px">把下面这段复制给 Claude：我会逐句点评你写的句子，并在下周重点复习错题。</p>
-    <textarea class="copybox" readonly>本周小测结果 ${QUIZ.date || ""}\n${report}</textarea>
-    <button class="btn ghost" id="again">再做一遍</button>`;
-  document.getElementById("again").onclick = () => { i = 0; results.length = 0; s.classList.add("hidden");
-    document.getElementById("quiz").classList.remove("hidden"); render(); };
-  const scores = JSON.parse(localStorage.getItem("scores") || "{}");
-  scores[QUIZ.date] = `${right}/${results.length}`;
-  localStorage.setItem("scores", JSON.stringify(scores));
-}
+  function header() {
+    const c = counts();
+    document.getElementById("subtitle").textContent =
+      `今天已做 ${c.d.done} 题 · 待复习 ${c.due.length} · 今日新题还剩 ${Math.min(c.newLeft, c.unseen.length)}`;
+    document.getElementById("progress").style.width = (questions.length ? c.mastered / questions.length * 100 : 0) + "%";
+    const log = load("log", []), sent = load("sentUpTo", 0);
+    const pending = log.filter(x => x.t > sent).length;
+    document.getElementById("tools").innerHTML = `
+      <div class="stats">
+        <div class="stat"><b>${questions.length}</b><span>题库总数</span></div>
+        <div class="stat"><b>${Object.keys(srs).length}</b><span>做过</span></div>
+        <div class="stat"><b>${c.mastered}</b><span>已掌握</span></div>
+      </div>
+      <button class="btn ghost" id="export">📋 把答题记录复制给 Claude${pending ? `（${pending} 条新记录）` : ""}</button>
+      <div class="muted" style="margin-top:6px">红色进度条 = 已掌握的比例（连续答对 4 次以上）</div>`;
+    document.getElementById("export").onclick = exportLog;
+  }
 
-render();
+  function exportLog() {
+    const log = load("log", []), sent = load("sentUpTo", 0);
+    const items = log.filter(x => x.t > sent && byId[x.id]);
+    if (!items.length) { alert("没有新的答题记录。"); return; }
+    const mark = { right: "✓", shaky: "△", wrong: "✗" };
+    const text = "手机APP答题记录\n" + items.map((x, k) => {
+      const q = byId[x.id];
+      return `${k + 1}. ${mark[x.result]} [${x.result}] ${q.answer}${q.entry_id ? " (" + q.entry_id + ")" : ""}` +
+        (x.result !== "right" && x.yours && x.yours.trim() ? `\n   我写的：${x.yours.trim()}` : "");
+    }).join("\n");
+    const done = () => { save("sentUpTo", items[items.length - 1].t); header(); alert("已复制！回到 Mac 上的 Claude，粘贴发给我就行。"); };
+    navigator.clipboard.writeText(text).then(done, () => {
+      document.getElementById("tools").insertAdjacentHTML("beforeend",
+        `<textarea class="copybox" readonly>${esc(text)}</textarea><div class="muted">自动复制失败：长按上面的文字 → 全选 → 拷贝。</div>`);
+      save("sentUpTo", items[items.length - 1].t);
+    });
+  }
+
+  function revealBlock(q, yours) {
+    const alts = (q.alternatives && q.alternatives.length)
+      ? `<div class="alt">也可以说：${q.alternatives.map(esc).join(" / ")}</div>` : "";
+    const mine = yours !== undefined && !yours.trim() ? `<div class="yours">你的答案：（空）</div>` : "";
+    const fb = yours !== undefined ? feedbackHtml(q, yours) : "";
+    const note = q.note ? `<div class="note">${esc(q.note)}</div>` : "";
+    return `<div class="reveal">${mine}<div class="ans">${esc(q.answer)}</div>${alts}${fb}${note}</div>`;
+  }
+
+  function doneScreen() {
+    const c = counts(), el = document.getElementById("quiz");
+    const next = questions.filter(q => srs[q.id]).map(q => srs[q.id].due).sort((a, b) => a - b)[0];
+    const when = next ? (next - Date.now() < DAY ? "今天稍后" : new Date(next).toLocaleDateString("zh-CN", { month: "long", day: "numeric" })) : "";
+    el.innerHTML = `<h2 style="margin:0 0 6px">今天的题做完啦 🎉</h2>
+      <p class="muted">${when ? `下一道复习题：${when}。` : ""}${c.unseen.length ? `题库里还有 ${c.unseen.length} 道新题。` : "题库里的新题都做过了，周六会加新题。"}</p>
+      ${c.unseen.length ? `<button class="btn" id="more">再来 5 道新题</button>` : ""}`;
+    const more = document.getElementById("more");
+    if (more) more.onclick = () => { const d = dailyNew(); d.extra += 5; save("daily", d); render(); };
+  }
+
+  function render() {
+    header();
+    const q = pick();
+    if (!q) return doneScreen();
+    const [label, instr] = TYPE_LABEL[q.type] || ["练习", ""];
+    const s = srs[q.id];
+    const badge = !s ? `<span class="count">新题</span>` : `<span class="count">复习</span>${s.lapses ? `<span class="again-tag">之前错过 ${s.lapses} 次</span>` : ""}`;
+    const el = document.getElementById("quiz");
+    const head = `<span class="tag">${label}</span>${badge}
+      <div class="instr">${esc(q.instruction || instr)}</div>
+      <div class="prompt">${esc(q.prompt)}</div>`;
+
+    if (q.choices && q.choices.length) {
+      el.innerHTML = head + `<div class="choices">${
+        q.choices.map((c, k) => `<button class="choice" data-k="${k}">${esc(c)}</button>`).join("")
+      }</div><div id="after"></div>`;
+      el.querySelectorAll(".choice").forEach(b => b.onclick = () => {
+        const picked = q.choices[+b.dataset.k], ok = picked === q.answer;
+        el.querySelectorAll(".choice").forEach(x => {
+          x.disabled = true;
+          if (q.choices[+x.dataset.k] === q.answer) x.classList.add("right");
+        });
+        if (!ok) b.classList.add("wrong");
+        grade(q, ok ? "right" : "wrong", picked);
+        const note = q.note ? `<div class="reveal"><div class="note">${esc(q.note)}</div></div>` : "";
+        document.getElementById("after").innerHTML = note + askBoxHtml() + `<button class="btn" id="next">下一题</button>`;
+        wireAsk(document.getElementById("after"), q, picked);
+        document.getElementById("next").onclick = render;
+        header();
+      });
+    } else {
+      el.innerHTML = head + `<textarea id="input" placeholder="先自己写，再看答案" autocapitalize="off" autocorrect="off" spellcheck="false"></textarea>
+        <button class="btn" id="show">看答案</button><div id="after"></div>`;
+      document.getElementById("show").onclick = () => {
+        const yours = document.getElementById("input").value;
+        document.getElementById("show").remove();
+        const sug = yours.trim() ? checkAnswer(q, yours).suggest : "wrong";
+        const sugText = { right: "写对了", shaky: "差一点", wrong: "没想起来" }[sug];
+        document.getElementById("after").innerHTML = revealBlock(q, yours) + askBoxHtml() +
+          `<div class="suggest-lbl">建议打分：${sugText}（可以自己改）</div>
+           <div class="grade">
+             <button class="g-right" data-r="right">写对了</button>
+             <button class="g-shaky" data-r="shaky">差一点</button>
+             <button class="g-wrong" data-r="wrong">没想起来</button>
+           </div>`;
+        wireAsk(document.getElementById("after"), q, yours);
+        document.querySelector(`.grade [data-r="${sug}"]`).classList.add("suggest");
+        document.querySelectorAll(".grade button").forEach(b => b.onclick = () => { grade(q, b.dataset.r, yours); render(); });
+      };
+    }
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  render();
 }
 
 boot();
