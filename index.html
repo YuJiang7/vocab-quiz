@@ -107,7 +107,34 @@ function esc(s) {
   return String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 }
 
+// Quizzes are AES-GCM encrypted; the key lives only on the user's devices.
+const fromB64 = s => Uint8Array.from(atob(s.replace(/-/g, "+").replace(/_/g, "/") + "===".slice((s.length + 3) % 4)), c => c.charCodeAt(0));
+
+async function decrypt(blob, keyText) {
+  const key = await crypto.subtle.importKey("raw", fromB64(keyText), "AES-GCM", false, ["decrypt"]);
+  const plain = await crypto.subtle.decrypt({ name: "AES-GCM", iv: fromB64(blob.iv) }, key, fromB64(blob.ct));
+  return JSON.parse(new TextDecoder().decode(plain));
+}
+
+function askForKey(message) {
+  document.getElementById("quiz").innerHTML = `<p>${message}</p>
+    <textarea id="keyin" placeholder="粘贴邮件里的钥匙" autocapitalize="off" autocorrect="off" spellcheck="false"></textarea>
+    <button class="btn" id="keybtn">解锁</button>`;
+  document.getElementById("keybtn").onclick = () => {
+    const k = document.getElementById("keyin").value.trim().replace(/^.*#k=/, "");
+    if (k) { localStorage.setItem("quizKey", k); boot(); }
+  };
+}
+
 async function boot() {
+  const m = location.hash.match(/k=([\w-]+)/);
+  if (m) {
+    localStorage.setItem("quizKey", m[1]);
+    history.replaceState(null, "", location.pathname + location.search);
+  }
+  const keyText = localStorage.getItem("quizKey");
+  if (!keyText) return askForKey("这是私人测验，需要钥匙才能打开。<br>第一次使用：把邮件里的钥匙粘贴到下面。");
+
   let list = [];
   try { list = await (await fetch("quizzes/index.json", { cache: "no-store" })).json(); } catch (_) {}
   if (!list.length) {
@@ -116,7 +143,10 @@ async function boot() {
   }
   const want = new URLSearchParams(location.search).get("q") || list[0].date;
   const entry = list.find(x => x.date === want) || list[0];
-  const quiz = await (await fetch(`quizzes/${entry.date}.json`, { cache: "no-store" })).json();
+  const blob = await (await fetch(`quizzes/${entry.date}.enc.json`, { cache: "no-store" })).json();
+  let quiz;
+  try { quiz = await decrypt(blob, keyText); }
+  catch (_) { localStorage.removeItem("quizKey"); return askForKey("钥匙不对，请重新粘贴一次。"); }
   const scores = JSON.parse(localStorage.getItem("scores") || "{}");
   document.getElementById("past").innerHTML = list.length > 1
     ? "<h3>往期测验</h3>" + list.map(x =>
