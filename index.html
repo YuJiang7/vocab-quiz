@@ -332,17 +332,22 @@ function start(questions) {
       <div class="jot"><h3>✍️ 随手记</h3>
         <input id="jotText" placeholder="听到或看到的词、句子，或想问的中文说法" autocapitalize="off" autocorrect="off" spellcheck="false">
         <textarea id="jotCtx" placeholder="（可选）在哪里遇到的？比如：点菜时服务员说的"></textarea>
-        <div class="row"><button class="btn ghost" id="jotSave">只保存</button><button class="btn" id="jotAsk">保存并问 Claude</button></div>
-        <div class="saved" id="jotMsg">${unsentNotes ? `已存 ${unsentNotes} 条，还没发给 Claude` : ""}</div>
+        <button class="btn" id="jotSave" style="margin-top:0">保存</button>
+        <div class="saved" id="jotMsg">${unsentNotes ? `已存 ${unsentNotes} 条，周五会一起发给 Claude` : "存下来的词，周五会随答题记录一起发给 Claude，周六出题"}</div>
+        <a href="#" id="jotAsk" style="display:block;margin-top:8px;font-size:14px;color:var(--accent)">想马上知道意思？保存后用手机 Claude 查一下 →</a>
+        <div class="muted" style="font-size:12px">（手机 Claude 的解释 Mac 上的 Claude 看不到，但你存的词会收到）</div>
       </div>
       <div class="stats">
         <div class="stat"><b>${questions.length}</b><span>题库总数</span></div>
         <div class="stat"><b>${Object.keys(srs).length}</b><span>做过</span></div>
         <div class="stat"><b>${c.mastered}</b><span>已掌握</span></div>
       </div>
-      <button class="btn ghost" id="export">📋 把答题记录和随手记复制给 Claude${pending ? `（${pending} 条新记录）` : ""}</button>
+      <button class="btn" id="mail">📧 把答题记录和随手记发给 Claude${pending ? `（${pending} 条新记录）` : ""}</button>
+      <div id="mailConfirm"></div>
+      <button class="btn ghost" id="export" style="font-size:14px;padding:9px">📋 改用复制（发邮件不方便时）</button>
       <div class="muted" style="margin-top:6px">红色进度条 = 已掌握的比例（连续答对 4 次以上）</div>`;
-    document.getElementById("export").onclick = exportLog;
+    document.getElementById("export").onclick = () => exportLog("copy");
+    document.getElementById("mail").onclick = () => exportLog("mail");
     const jot = ask => {
       const text = document.getElementById("jotText").value.trim();
       if (!text) { document.getElementById("jotText").focus(); return; }
@@ -357,10 +362,10 @@ function start(questions) {
       } else header();
     };
     document.getElementById("jotSave").onclick = () => jot(false);
-    document.getElementById("jotAsk").onclick = () => jot(true);
+    document.getElementById("jotAsk").onclick = e => { e.preventDefault(); jot(true); };
   }
 
-  function exportLog() {
+  function exportLog(mode) {
     const log = load("log", []), sent = load("sentUpTo", 0);
     const items = log.filter(x => x.t > sent && byId[x.id]);
     const notes = load("notes", []).filter(n => n.t > sent);
@@ -374,6 +379,17 @@ function start(questions) {
         (x.result !== "right" && x.yours && x.yours.trim() ? `\n   我写的：${x.yours.trim()}` : "");
     }).join("\n") + noteText;
     const lastT = Math.max(...items.map(x => x.t), ...notes.map(n => n.t));
+    if (mode === "mail") {
+      const d = new Date(), stamp = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+      window.location.href = "mailto:yujiang7@stanford.edu?subject=" + encodeURIComponent(`英文小测记录 ${stamp}`) +
+        "&body=" + encodeURIComponent(text + "\n\n（手机APP自动生成，Claude 会在周六读取）");
+      document.getElementById("mailConfirm").innerHTML = `<div class="muted" style="margin:8px 0 4px">邮件发出去了吗？</div>
+        <div class="row" style="display:flex;gap:8px"><button class="btn" id="sentYes" style="flex:1;margin-top:0">发出去了</button>
+        <button class="btn ghost" id="sentNo" style="flex:1;margin-top:0">没有</button></div>`;
+      document.getElementById("sentYes").onclick = () => { save("sentUpTo", lastT); header(); };
+      document.getElementById("sentNo").onclick = () => { document.getElementById("mailConfirm").innerHTML = `<div class="muted">没关系，记录还在。可以再点一次，或者用下面的“复制”。</div>`; };
+      return;
+    }
     const done = () => { save("sentUpTo", lastT); header(); alert("已复制！回到 Mac 上的 Claude，粘贴发给我就行。"); };
     navigator.clipboard.writeText(text).then(done, () => {
       document.getElementById("tools").insertAdjacentHTML("beforeend",
