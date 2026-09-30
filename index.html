@@ -94,6 +94,17 @@
   .copybox { width: 100%; min-height: 90px; font: 13px/1.4 ui-monospace, Menlo, monospace; margin-top: 8px; }
   .muted { color: var(--muted); font-size: 14px; }
   .tools { margin-top: 22px; }
+  .tabs { display: flex; gap: 6px; margin: 14px 0 4px; background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 4px; }
+  .tabbtn { flex: 1; font: inherit; font-size: 15px; font-weight: 600; color: var(--muted); background: none; border: 0; border-radius: 9px; padding: 9px 4px; cursor: pointer; }
+  .tabbtn.on { background: var(--accent); color: #fff; }
+  .lk { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 16px; margin-top: 12px; }
+  .lk input { width: 100%; font: inherit; font-size: 18px; color: var(--ink); background: var(--bg); border: 1px solid var(--line); border-radius: 10px; padding: 11px 12px; }
+  .lk .row { display: flex; gap: 8px; margin-top: 10px; }
+  .lk .row .btn { margin-top: 0; flex: 1; padding: 11px 6px; font-size: 15px; }
+  .recent { list-style: none; padding: 0; margin: 10px 0 0; }
+  .recent li { border-top: 1px solid var(--line); padding: 9px 2px; font-size: 15px; display: flex; justify-content: space-between; gap: 8px; }
+  .recent li a { color: var(--accent); text-decoration: none; font-size: 13px; white-space: nowrap; }
+  .tip { font-size: 13px; color: var(--muted); margin-top: 10px; line-height: 1.5; }
   .ctx { font-size: 13px; color: var(--muted); margin: 8px 0 2px; }
   .toks { font-size: 19px; line-height: 2.1; margin: 8px 0 14px; }
   .tok { display: inline; font: inherit; color: var(--ink); background: none; border: 0; border-bottom: 2px dotted var(--line); padding: 1px 2px; margin: 0 1px; cursor: pointer; border-radius: 4px; }
@@ -136,9 +147,17 @@
     <h1 id="title">英文小测</h1>
     <p id="subtitle"></p>
   </header>
-  <div class="bar"><div id="progress"></div></div>
-
-  <div id="quiz" class="card"></div>
+  <nav class="tabs">
+    <button class="tabbtn on" data-sec="practice">📝 练习</button>
+    <button class="tabbtn" data-sec="lookup">🔍 随手查</button>
+    <button class="tabbtn" data-sec="jot">✍️ 随手记</button>
+  </nav>
+  <div id="sec-practice" class="sec">
+    <div class="bar"><div id="progress"></div></div>
+    <div id="quiz" class="card"></div>
+  </div>
+  <div id="sec-lookup" class="sec hidden"></div>
+  <div id="sec-jot" class="sec hidden"></div>
 
   <div id="tools" class="tools"></div>
 </div>
@@ -327,43 +346,93 @@ function start(questions) {
     document.getElementById("progress").style.width = (questions.length ? c.mastered / questions.length * 100 : 0) + "%";
     const log = load("log", []), sent = load("sentUpTo", 0);
     const pending = log.filter(x => x.t > sent).length + load("notes", []).filter(n => n.t > sent).length;
-    const notes = load("notes", []), unsentNotes = notes.filter(n => n.t > sent).length;
     document.getElementById("tools").innerHTML = `
-      <div class="jot"><h3>✍️ 随手记</h3>
-        <input id="jotText" placeholder="听到或看到的词、句子，或想问的中文说法" autocapitalize="off" autocorrect="off" spellcheck="false">
-        <textarea id="jotCtx" placeholder="（可选）在哪里遇到的？比如：点菜时服务员说的"></textarea>
-        <button class="btn" id="jotSave" style="margin-top:0">保存</button>
-        <div class="saved" id="jotMsg">${unsentNotes ? `已存 ${unsentNotes} 条，周五会一起发给 Claude` : "存下来的词，周五会随答题记录一起发给 Claude，周六出题"}</div>
-        <a href="#" id="jotAsk" style="display:block;margin-top:8px;font-size:14px;color:var(--accent)">想马上知道意思？保存后用手机 Claude 查一下 →</a>
-        <div class="muted" style="font-size:12px">（手机 Claude 的解释 Mac 上的 Claude 看不到，但你存的词会收到）</div>
-      </div>
       <div class="stats">
         <div class="stat"><b>${questions.length}</b><span>题库总数</span></div>
         <div class="stat"><b>${Object.keys(srs).length}</b><span>做过</span></div>
         <div class="stat"><b>${c.mastered}</b><span>已掌握</span></div>
       </div>
-      <button class="btn" id="mail">📧 把答题记录和随手记发给 Claude${pending ? `（${pending} 条新记录）` : ""}</button>
+      <button class="btn" id="mail">📧 把这周的记录发给 Claude${pending ? `（${pending} 条新记录）` : ""}</button>
       <div id="mailConfirm"></div>
       <button class="btn ghost" id="export" style="font-size:14px;padding:9px">📋 改用复制（发邮件不方便时）</button>
       <div class="muted" style="margin-top:6px">红色进度条 = 已掌握的比例（连续答对 4 次以上）</div>`;
     document.getElementById("export").onclick = () => exportLog("copy");
     document.getElementById("mail").onclick = () => exportLog("mail");
+
+  }
+
+
+  // ---- ✍️ 随手记 & 🔍 随手查 (both saved to "notes" and sent with the weekly report) ----
+  const addNote = (text, ctx, kind) => { const all = load("notes", []); all.push({ t: Date.now(), text, ctx, kind }); save("notes", all.slice(-500)); };
+  function renderJot(msg) {
+    const sent = load("sentUpTo", 0), unsent = load("notes", []).filter(n => n.t > sent && n.kind !== "lookup").length;
+    document.getElementById("sec-jot").innerHTML = `<div class="jot" style="margin-top:12px"><h3>✍️ 随手记</h3>
+      <div class="tip" style="margin:0 0 8px">想问的中文说法、没听懂的一句话、想弄清的用法，都记在这里。</div>
+      <input id="jotText" placeholder="比如：你的动作看起来很帅 / 课上听到的 'push back on'" autocapitalize="off" autocorrect="off" spellcheck="false">
+      <textarea id="jotCtx" placeholder="（可选）在哪里遇到的？比如：点菜时服务员说的"></textarea>
+      <button class="btn" id="jotSave" style="margin-top:0">保存</button>
+      <div class="saved">${msg || (unsent ? `已存 ${unsent} 条，周五会一起发给 Claude` : "存下来的内容，周五会随答题记录一起发给 Claude，周六出题")}</div>
+      <a href="#" id="jotAsk" style="display:block;margin-top:8px;font-size:14px;color:var(--accent)">想马上知道意思？保存后用手机 Claude 查一下 →</a>
+      <div class="muted" style="font-size:12px">（手机 Claude 的解释 Mac 上的 Claude 看不到，但你存的内容会收到）</div></div>`;
     const jot = ask => {
       const text = document.getElementById("jotText").value.trim();
       if (!text) { document.getElementById("jotText").focus(); return; }
       const ctx = document.getElementById("jotCtx").value.trim();
-      const all = load("notes", []); all.push({ t: Date.now(), text, ctx }); save("notes", all.slice(-300));
+      addNote(text, ctx, "jot");
       if (ask) {
-        const lines = ["我在生活中遇到一个英文表达，请像一位英文老师一样用中文给我讲清楚（意思、语气/场合、常见搭配、一两个例句；如果我写的是中文，就告诉我地道的英文说法）。",
-          `表达：${text}`, ctx ? `场景：${ctx}` : "",
-          "最后请用一行“📌 生词本：……”总结（英文表达 + 中文说明）。"].filter(Boolean).join("\n");
+        const lines = ["我在生活中遇到一个英文表达，请像一位英文老师一样中英夹杂地给我讲清楚（意思、语气/场合、常见搭配、一两个例句；如果我写的是中文，就告诉我地道的英文说法）。",
+          `表达：${text}`, ctx ? `场景：${ctx}` : ""].filter(Boolean).join("\n");
         try { navigator.clipboard.writeText(lines); } catch (_) {}
-        window.location.href = "https://claude.ai/new?q=" + encodeURIComponent(lines);
-      } else header();
+        window.open("https://claude.ai/new?q=" + encodeURIComponent(lines), "_blank");
+      }
+      renderJot("✓ 已保存"); header();
     };
     document.getElementById("jotSave").onclick = () => jot(false);
     document.getElementById("jotAsk").onclick = e => { e.preventDefault(); jot(true); };
   }
+
+  const DICTS = {
+    ldoce:   ["朗文", w => "https://www.ldoceonline.com/dictionary/" + encodeURIComponent(w.trim().toLowerCase().replace(/\s+/g, "-"))],
+    youdao:  ["有道", w => "https://dict.youdao.com/result?word=" + encodeURIComponent(w.trim()) + "&lang=en"],
+    cambridge: ["剑桥", w => "https://dictionary.cambridge.org/dictionary/english-chinese-simplified/" + encodeURIComponent(w.trim().toLowerCase().replace(/\s+/g, "-"))]
+  };
+  function renderLookup() {
+    const recent = load("notes", []).filter(n => n.kind === "lookup").slice(-12).reverse();
+    document.getElementById("sec-lookup").innerHTML = `<div class="lk">
+      <input id="lkWord" placeholder="输入单词或短语" autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="search">
+      <input id="lkCtx" placeholder="（可选）原句或场景，方便之后复习" style="font-size:15px;margin-top:8px" autocapitalize="off">
+      <div class="row">${Object.entries(DICTS).map(([k, [name]]) => `<button class="btn${k === "ldoce" ? "" : " ghost"}" data-d="${k}">${name}</button>`).join("")}</div>
+      <div class="tip">🔖 查过的词会自动记下来，周五随记录发给 Claude，之后出成题复习。<br>
+        📷 拍照查词：用 iPhone 相机对准英文，点右下角的「文字」图标，就能复制照片里的字，再粘贴到上面。<br>
+        📘 想用你买的 LDOCE 6 App：输入后点「复制」，再打开 LDOCE 6 粘贴。</div>
+      <button class="btn ghost" id="lkCopy" style="font-size:14px;padding:9px">复制这个词</button>
+      ${recent.length ? `<h3 style="font-size:14px;color:var(--muted);margin:16px 0 0">最近查过</h3><ul class="recent">${recent.map(n =>
+        `<li><span>${esc(n.text)}${n.ctx ? `<br><span class="muted" style="font-size:12px">${esc(n.ctx)}</span>` : ""}</span><a href="#" data-w="${esc(n.text)}">再查 →</a></li>`).join("")}</ul>` : ""}
+    </div>`;
+    const go = (d, word) => {
+      const w = (word ?? document.getElementById("lkWord").value).trim();
+      if (!w) { document.getElementById("lkWord").focus(); return; }
+      if (word === undefined) addNote(w, document.getElementById("lkCtx").value.trim(), "lookup");
+      window.open(DICTS[d][1](w), "_blank");
+      renderLookup(); header();
+    };
+    document.querySelectorAll("#sec-lookup [data-d]").forEach(b => b.onclick = () => go(b.dataset.d));
+    document.getElementById("lkWord").onkeydown = e => { if (e.key === "Enter") go("ldoce"); };
+    document.getElementById("lkCopy").onclick = () => {
+      const w = document.getElementById("lkWord").value.trim(); if (!w) return;
+      addNote(w, document.getElementById("lkCtx").value.trim(), "lookup");
+      navigator.clipboard.writeText(w).then(() => alert("已复制，打开 LDOCE 6 粘贴就行"), () => {});
+      renderLookup(); header();
+    };
+    document.querySelectorAll("#sec-lookup .recent a").forEach(a => a.onclick = e => { e.preventDefault(); go("ldoce", a.dataset.w); });
+  }
+
+  document.querySelectorAll(".tabbtn").forEach(b => b.onclick = () => {
+    document.querySelectorAll(".tabbtn").forEach(x => x.classList.toggle("on", x === b));
+    ["practice", "lookup", "jot"].forEach(k => document.getElementById("sec-" + k).classList.toggle("hidden", k !== b.dataset.sec));
+    window.scrollTo(0, 0);
+  });
+  renderLookup(); renderJot();
 
   function exportLog(mode) {
     const log = load("log", []), sent = load("sentUpTo", 0);
@@ -371,8 +440,11 @@ function start(questions) {
     const notes = load("notes", []).filter(n => n.t > sent);
     if (!items.length && !notes.length) { alert("没有新的记录。"); return; }
     const mark = { right: "✓", shaky: "△", wrong: "✗" };
-    const noteText = notes.length ? "\n\n随手记（请解释并记进生词本）\n" + notes.map((n, k) =>
-      `${k + 1}. ${n.text}${n.ctx ? "（" + n.ctx + "）" : ""}`).join("\n") : "";
+    const jots = notes.filter(n => n.kind !== "lookup"), looks = notes.filter(n => n.kind === "lookup");
+    const noteText = (jots.length ? "\n\n随手记（请解释并记进生词本）\n" + jots.map((n, k) =>
+      `${k + 1}. ${n.text}${n.ctx ? "（" + n.ctx + "）" : ""}`).join("\n") : "") +
+      (looks.length ? "\n\n随手查过的词（请记进生词本并出题复习）\n" + looks.map((n, k) =>
+      `${k + 1}. ${n.text}${n.ctx ? "（" + n.ctx + "）" : ""}`).join("\n") : "");
     const text = "手机APP答题记录\n" + items.map((x, k) => {
       const q = byId[x.id];
       return `${k + 1}. ${mark[x.result]} [${x.result}] ${q.answer}${q.entry_id ? " (" + q.entry_id + ")" : ""}` +
