@@ -298,7 +298,8 @@ const TYPE_LABEL = {
   cloze:     ["语境填空", "选出最适合填进空格的词。"],
   synonym:   ["辨析近义词", "选出在这个语境里最准确的一个。"],
   spot:      ["找错改错", "点出你觉得有问题的词（可以点好几个），再点“检查”。"],
-  fill:      ["句子填空", "只填空格里的词。想不起来可以点“提示”。"]
+  fill:      ["句子填空", "只填空格里的词。想不起来可以点“提示”。"],
+  oral:      ["开口说", "先大声说出英文，再点“看答案”，自己打分。"]
 };
 
 function start(questions) {
@@ -588,6 +589,23 @@ function start(questions) {
         const n = q.blanks.length;
         const result = nOk === n ? (usedHint ? "shaky" : "right") : (nOk >= n / 2 ? "shaky" : "wrong");
         finishCard(result, typed.join(" / "));
+      };
+    } else if (q.type === "oral") {
+      el.innerHTML = head + `${q.context ? `<div class="ctx">${esc(q.context)}</div>` : ""}
+        <button class="btn" id="show">我说完了，看答案</button><div id="after"></div>`;
+      document.getElementById("show").onclick = () => {
+        document.getElementById("show").remove();
+        const speak = "speechSynthesis" in window ? `<button class="btn ghost" id="say">🔊 听一遍</button>` : "";
+        document.getElementById("after").innerHTML = revealBlock(q) + speak + askBoxHtml() +
+          `<div class="grade">
+             <button class="g-right" data-r="right">说对了</button>
+             <button class="g-shaky" data-r="shaky">差一点</button>
+             <button class="g-wrong" data-r="wrong">没想起来</button>
+           </div>`;
+        const say = document.getElementById("say");
+        if (say) say.onclick = () => { speechSynthesis.cancel(); const u = new SpeechSynthesisUtterance(q.answer); u.lang = "en-US"; speechSynthesis.speak(u); };
+        wireAsk(document.getElementById("after"), q, "");
+        document.querySelectorAll(".grade button").forEach(b => b.onclick = () => { grade(q, b.dataset.r, ""); render(); });
       };
     } else if (q.choices && q.choices.length) {
       el.innerHTML = head + `<div class="choices">${
